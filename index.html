@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>GIANTS — Arena</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #canvas { display: block; width: 100vw; height: 100dvh; }
+
+  /* HUD */
+  #hud {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 10;
+  }
+  #title {
+    position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+    color: #c8a96e; font-size: 11px; letter-spacing: 0.35em;
+    text-transform: uppercase; opacity: 0.7;
+    text-shadow: 0 0 20px rgba(200,169,110,0.5);
+  }
+  #crosshair {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px; height: 14px;
+    opacity: 0.4;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: #c8a96e;
+  }
+  #crosshair::before { width: 1px; height: 100%; left: 50%; top: 0; }
+  #crosshair::after  { width: 100%; height: 1px; top: 50%; left: 0; }
+
+  /* Controls overlay */
+  #controls {
+    position: fixed; bottom: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 20;
+  }
+
+  /* Joystick zones */
+  .joystick-zone {
+    position: absolute; bottom: 28px;
+    width: 140px; height: 140px;
+    pointer-events: all;
+  }
+  #left-zone  { left: 20px; }
+  #right-zone { right: 20px; }
+
+  .joystick-base {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    border-radius: 50%;
+    background: rgba(200,169,110,0.06);
+    border: 1px solid rgba(200,169,110,0.18);
+    backdrop-filter: blur(4px);
+  }
+  .joystick-stick {
+    position: absolute;
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, rgba(200,169,110,0.45), rgba(200,169,110,0.12));
+    border: 1px solid rgba(200,169,110,0.5);
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    transition: none;
+    box-shadow: 0 0 18px rgba(200,169,110,0.15);
+  }
+
+  /* Vertical + Roll buttons */
+  .btn-group {
+    position: absolute; bottom: 180px;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: all;
+  }
+  #left-btns  { left: 34px; }
+  #right-btns { right: 34px; }
+
+  .ctrl-btn {
+    width: 44px; height: 44px;
+    border-radius: 8px;
+    background: rgba(200,169,110,0.06);
+    border: 1px solid rgba(200,169,110,0.22);
+    color: #c8a96e;
+    font-size: 18px; line-height: 44px; text-align: center;
+    cursor: pointer;
+    pointer-events: all;
+    backdrop-filter: blur(4px);
+    transition: background 0.1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ctrl-btn:active, .ctrl-btn.pressed {
+    background: rgba(200,169,110,0.2);
+    border-color: rgba(200,169,110,0.6);
+  }
+
+  /* Info label */
+  #info {
+    position: fixed; bottom: 12px; left: 50%;
+    transform: translateX(-50%);
+    color: rgba(200,169,110,0.35);
+    font-size: 9px; letter-spacing: 0.2em;
+    pointer-events: none; z-index: 10;
+    white-space: nowrap;
+  }
+
+  /* Loading */
+  #loading {
+    position: fixed; inset: 0;
+    background: #050301;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 20px;
+    z-index: 100;
+    transition: opacity 0.8s;
+  }
+  #loading.fade { opacity: 0; pointer-events: none; }
+  .load-title {
+    color: #c8a96e; font-size: 28px; letter-spacing: 0.5em;
+    text-transform: uppercase;
+  }
+  .load-sub {
+    color: rgba(200,169,110,0.4); font-size: 10px;
+    letter-spacing: 0.3em; text-transform: uppercase;
+  }
+  .load-bar-wrap {
+    width: 160px; height: 1px; background: rgba(200,169,110,0.15);
+    position: relative; overflow: hidden;
+  }
+  .load-bar {
+    position: absolute; left: 0; top: 0; height: 100%;
+    background: #c8a96e;
+    animation: loadbar 1.6s ease-out forwards;
+  }
+  @keyframes loadbar {
+    from { width: 0; }
+    to   { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="load-title">GIANTS</div>
+  <div class="load-sub">Entering the arena</div>
+  <div class="load-bar-wrap"><div class="load-bar"></div></div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div id="title">GIANTS — ARENA</div>
+  <div id="crosshair"></div>
+</div>
+
+<div id="controls">
+  <!-- LEFT joystick: move -->
+  <div id="left-zone" class="joystick-zone">
+    <div class="joystick-base"></div>
+    <div id="left-stick" class="joystick-stick"></div>
+  </div>
+
+  <!-- RIGHT joystick: look -->
+  <div id="right-zone" class="joystick-zone">
+    <div class="joystick-base"></div>
+    <div id="right-stick" class="joystick-stick"></div>
+  </div>
+
+  <!-- Vertical + Roll (left side) -->
+  <div id="left-btns" class="btn-group">
+    <button class="ctrl-btn" id="btn-up">↑</button>
+    <button class="ctrl-btn" id="btn-down">↓</button>
+  </div>
+
+  <!-- Roll (right side) -->
+  <div id="right-btns" class="btn-group">
+    <button class="ctrl-btn" id="btn-roll-l">↺</button>
+    <button class="ctrl-btn" id="btn-roll-r">↻</button>
+  </div>
+</div>
+
+<div id="info">L-STICK MOVE · R-STICK LOOK · ↑↓ ALTITUDE · ↺↻ ROLL</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ─────────────────────────────────────────────
+//  SCENE SETUP
+// ─────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+renderer.outputEncoding = THREE.sRGBEncoding;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04020a);
+scene.fog = new THREE.FogExp2(0x06030f, 0.012);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 800);
+camera.position.set(0, 8, 40);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─────────────────────────────────────────────
+//  LIGHTING
+// ─────────────────────────────────────────────
+const ambient = new THREE.AmbientLight(0x150820, 0.4);
+scene.add(ambient);
+
+// Key light — golden
+const keyLight = new THREE.DirectionalLight(0xffa040, 2.2);
+keyLight.position.set(30, 60, 20);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 200;
+keyLight.shadow.camera.left = -80;
+keyLight.shadow.camera.right = 80;
+keyLight.shadow.camera.top = 80;
+keyLight.shadow.camera.bottom = -80;
+scene.add(keyLight);
+
+// Rim — cold blue
+const rimLight = new THREE.DirectionalLight(0x2060ff, 1.4);
+rimLight.position.set(-40, 40, -30);
+scene.add(rimLight);
+
+// Ground bounce
+const bounceLight = new THREE.HemisphereLight(0x300820, 0x100508, 0.5);
+scene.add(bounceLight);
+
+// Two arena spotlights
+function addSpot(x, z, color) {
+  const sp = new THREE.SpotLight(color, 3, 120, Math.PI / 6, 0.4, 1.5);
+  sp.position.set(x, 80, z);
+  sp.castShadow = false;
+  scene.add(sp);
+  scene.add(sp.target);
+  sp.target.position.set(x * 0.5, 0, z * 0.5);
+}
+addSpot(-20, 10, 0xff3010);
+addSpot(20, -10, 0x0080ff);
+
+// ─────────────────────────────────────────────
+//  ARENA GROUND
+// ─────────────────────────────────────────────
+const groundGeo = new THREE.CircleGeometry(200, 64);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x0a0610,
+  roughness: 0.9,
+  metalness: 0.1,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Dirt/crack ring lines
+for (let r = 15; r <= 90; r += 15) {
+  const ringGeo = new THREE.RingGeometry(r - 0.15, r + 0.15, 64);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x1a0f20, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.01;
+  scene.add(ring);
+}
+
+// ─────────────────────────────────────────────
+//  PARTICLE DUST
+// ─────────────────────────────────────────────
+const DUST_COUNT = 800;
+const dustGeo = new THREE.BufferGeometry();
+const dustPos = new Float32Array(DUST_COUNT * 3);
+const dustPhase = new Float32Array(DUST_COUNT);
+for (let i = 0; i < DUST_COUNT; i++) {
+  const a = Math.random() * Math.PI * 2;
+  const r = 10 + Math.random() * 55;
+  dustPos[i * 3]     = Math.cos(a) * r;
+  dustPos[i * 3 + 1] = Math.random() * 28;
+  dustPos[i * 3 + 2] = Math.sin(a) * r;
+  dustPhase[i] = Math.random() * Math.PI * 2;
+}
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+const dustMat = new THREE.PointsMaterial({ color: 0x8060a0, size: 0.18, transparent: true, opacity: 0.3, sizeAttenuation: true });
+const dust = new THREE.Points(dustGeo, dustMat);
+scene.add(dust);
+
+// ─────────────────────────────────────────────
+//  SKELETAL GIANT BUILDER
+// ─────────────────────────────────────────────
+function makeCapsule(radius, height, color, emissive = 0x000000) {
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.3, emissive, emissiveIntensity: 0.15 });
+  const group = new THREE.Group();
+
+  const bodyGeo = new THREE.CylinderGeometry(radius, radius * 0.9, height, 12);
+  const body = new THREE.Mesh(bodyGeo, mat);
+  body.castShadow = true;
+  group.add(body);
+
+  const capGeo = new THREE.SphereGeometry(radius, 12, 8);
+  const capTop = new THREE.Mesh(capGeo, mat);
+  capTop.position.y = height / 2;
+  capTop.castShadow = true;
+  group.add(capTop);
+
+  const capBot = new THREE.Mesh(capGeo, mat);
+  capBot.position.y = -height / 2;
+  capBot.castShadow = true;
+  group.add(capBot);
+
+  return group;
+}
+
+function buildGiant(color, emissive) {
+  const giant = new THREE.Group();
+
+  // Torso
+  const torso = makeCapsule(2.2, 5.5, color, emissive);
+  giant.add(torso);
+
+  // Neck
+  const neck = makeCapsule(0.9, 1.8, color, emissive);
+  neck.position.y = 4.2;
+  giant.add(neck);
+
+  // Head
+  const headGeo = new THREE.SphereGeometry(1.8, 16, 12);
+  const headMat = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.4, emissive, emissiveIntensity: 0.2 });
+  const head = new THREE.Mesh(headGeo, headMat);
+  head.castShadow = true;
+  head.position.y = 6.2;
+  giant.add(head);
+
+  // Eye glow
+  const eyeGeo = new THREE.SphereGeometry(0.38, 8, 8);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: emissive === 0xff2200 ? 0xff4422 : 0x22aaff });
+  for (const ex of [-0.65, 0.65]) {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(ex, 6.35, 1.5);
+    giant.add(eye);
+  }
+
+  // Shoulders
+  const shoulderL = makeCapsule(1.1, 0.8, color, emissive);
+  shoulderL.position.set(-3.4, 2.0, 0);
+  giant.add(shoulderL);
+
+  const shoulderR = makeCapsule(1.1, 0.8, color, emissive);
+  shoulderR.position.set(3.4, 2.0, 0);
+  giant.add(shoulderR);
+
+  // Upper arms (pivot at shoulder)
+  const armPivotL = new THREE.Group();
+  armPivotL.position.set(-3.4, 2.0, 0);
+  giant.add(armPivotL);
+  const upperArmL = makeCapsule(0.85, 3.6, color, emissive);
+  upperArmL.position.y = -2.2;
+  armPivotL.add(upperArmL);
+
+  const armPivotR = new THREE.Group();
+  armPivotR.position.set(3.4, 2.0, 0);
+  giant.add(armPivotR);
+  const upperArmR = makeCapsule(0.85, 3.6, color, emissive);
+  upperArmR.position.y = -2.2;
+  armPivotR.add(upperArmR);
+
+  // Lower arms (pivot at elbow)
+  const elbowPivotL = new THREE.Group();
+  elbowPivotL.position.y = -3.8;
+  armPivotL.add(elbowPivotL);
+  const lowerArmL = makeCapsule(0.65, 3.2, color, emissive);
+  lowerArmL.position.y = -1.8;
+  elbowPivotL.add(lowerArmL);
+
+  const elbowPivotR = new THREE.Group();
+  elbowPivotR.position.y = -3.8;
+  armPivotR.add(elbowPivotR);
+  const lowerArmR = makeCapsule(0.65, 3.2, color, emissive);
+  lowerArmR.position.y = -1.8;
+  elbowPivotR.add(lowerArmR);
+
+  // Fists
+  const fistGeo = new THREE.IcosahedronGeometry(0.9, 1);
+  const fistMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.5, emissive, emissiveIntensity: 0.3 });
+  const fistL = new THREE.Mesh(fistGeo, fistMat);
+  fistL.position.y = -3.4; fistL.castShadow = true;
+  elbowPivotL.add(fistL);
+  const fistR = new THREE.Mesh(fistGeo, fistMat);
+  fistR.position.y = -3.4; fistR.castShadow = true;
+  elbowPivotR.add(fistR);
+
+  // Pelvis
+  const pelvis = makeCapsule(1.8, 1.5, color, emissive);
+  pelvis.position.y = -3.8;
+  giant.add(pelvis);
+
+  // Hip pivots
+  const hipPivotL = new THREE.Group();
+  hipPivotL.position.set(-1.4, -4.8, 0);
+  giant.add(hipPivotL);
+
+  const hipPivotR = new THREE.Group();
+  hipPivotR.position.set(1.4, -4.8, 0);
+  giant.add(hipPivotR);
+
+  // Upper legs
+  const upperLegL = makeCapsule(1.0, 5.0, color, emissive);
+  upperLegL.position.y = -3.0;
+  hipPivotL.add(upperLegL);
+
+  const upperLegR = makeCapsule(1.0, 5.0, color, emissive);
+  upperLegR.position.y = -3.0;
+  hipPivotR.add(upperLegR);
+
+  // Knee pivots
+  const kneePivotL = new THREE.Group();
+  kneePivotL.position.y = -5.8;
+  hipPivotL.add(kneePivotL);
+
+  const kneePivotR = new THREE.Group();
+  kneePivotR.position.y = -5.8;
+  hipPivotR.add(kneePivotR);
+
+  // Lower legs
+  const lowerLegL = makeCapsule(0.75, 4.5, color, emissive);
+  lowerLegL.position.y = -2.6;
+  kneePivotL.add(lowerLegL);
+
+  const lowerLegR = makeCapsule(0.75, 4.5, color, emissive);
+  lowerLegR.position.y = -2.6;
+  kneePivotR.add(lowerLegR);
+
+  // Feet
+  const footGeo = new THREE.BoxGeometry(1.8, 0.7, 3.2);
+  const footMat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.2 });
+  const footL = new THREE.Mesh(footGeo, footMat);
+  footL.position.set(0, -4.9, 0.6); footL.castShadow = true;
+  kneePivotL.add(footL);
+  const footR = new THREE.Mesh(footGeo, footMat);
+  footR.position.set(0, -4.9, 0.6); footR.castShadow = true;
+  kneePivotR.add(footR);
+
+  return {
+    group: giant,
+    parts: {
+      torso, head,
+      armPivotL, armPivotR,
+      elbowPivotL, elbowPivotR,
+      hipPivotL, hipPivotR,
+      kneePivotL, kneePivotR,
+    }
+  };
+}
+
+// Spawn two giants
+const giantA = buildGiant(0x3a1810, 0xff2200);
+giantA.group.position.set(-18, 14, 0);
+scene.add(giantA.group);
+
+const giantB = buildGiant(0x0d1a30, 0x0044ff);
+giantB.group.position.set(18, 14, 0);
+giantB.group.rotation.y = Math.PI;
+scene.add(giantB.group);
+
+// ─────────────────────────────────────────────
+//  GLOW RINGS (ground FX)
+// ─────────────────────────────────────────────
+function groundGlow(x, z, color) {
+  const geo = new THREE.RingGeometry(3.5, 4.5, 32);
+  const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.22 });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.05, z);
+  scene.add(ring);
+  return ring;
+}
+const glowA = groundGlow(-18, 0, 0xff2200);
+const glowB = groundGlow(18, 0, 0x0044ff);
+
+// ─────────────────────────────────────────────
+//  ANIMATION DATA
+// ─────────────────────────────────────────────
+function animateGiant(g, t, phase, isFighting) {
+  const p = g.parts;
+  const sp = isFighting ? 1.8 : 0.7;
+
+  // Torso bob
+  g.group.position.y = 14 + Math.sin(t * sp + phase) * 0.8;
+
+  // Torso lean toward opponent
+  const leaning = Math.sin(t * 0.5 + phase) * 0.12;
+  g.group.rotation.z = leaning;
+  g.group.rotation.x = -0.08 + Math.sin(t * 0.3 + phase) * 0.06;
+
+  // Head tracking
+  p.head.rotation.y = Math.sin(t * 0.4 + phase) * 0.25;
+  p.head.rotation.x = Math.sin(t * 0.6) * 0.12;
+
+  // Arm swing fight
+  const armSwingL = Math.sin(t * sp + phase) * 1.0 + 0.3;
+  const armSwingR = Math.sin(t * sp + phase + Math.PI) * 1.0 + 0.3;
+  p.armPivotL.rotation.x = armSwingL;
+  p.armPivotR.rotation.x = armSwingR;
+  p.armPivotL.rotation.z = 0.2 + Math.sin(t * 0.7) * 0.15;
+  p.armPivotR.rotation.z = -(0.2 + Math.sin(t * 0.7 + 1) * 0.15);
+
+  // Elbow bend
+  p.elbowPivotL.rotation.x = Math.max(0, Math.sin(t * sp + phase) * 1.4);
+  p.elbowPivotR.rotation.x = Math.max(0, Math.sin(t * sp + phase + Math.PI) * 1.4);
+
+  // Leg march
+  p.hipPivotL.rotation.x = Math.sin(t * sp + phase) * 0.55;
+  p.hipPivotR.rotation.x = Math.sin(t * sp + phase + Math.PI) * 0.55;
+  p.kneePivotL.rotation.x = Math.max(0, -Math.sin(t * sp + phase) * 0.9);
+  p.kneePivotR.rotation.x = Math.max(0, -Math.sin(t * sp + phase + Math.PI) * 0.9);
+}
+
+// ─────────────────────────────────────────────
+//  CAMERA CONTROLLER STATE
+// ─────────────────────────────────────────────
+const camState = {
+  yaw: 0, pitch: 0, roll: 0,
+  vel: new THREE.Vector3(),
+};
+
+// Euler for camera orientation
+const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+// ─────────────────────────────────────────────
+//  JOYSTICK INPUT
+// ─────────────────────────────────────────────
+const joysticks = {
+  left:  { active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0, stick: null, zone: null },
+  right: { active: false, id: -1, startX: 0, startY: 0, dx: 0, dy: 0, stick: null, zone: null },
+};
+
+joysticks.left.stick  = document.getElementById('left-stick');
+joysticks.left.zone   = document.getElementById('left-zone');
+joysticks.right.stick = document.getElementById('right-stick');
+joysticks.right.zone  = document.getElementById('right-zone');
+
+const RADIUS = 44;
+
+function getZoneCenter(zone) {
+  const r = zone.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function updateStick(js, touchX, touchY) {
+  const c = getZoneCenter(js.zone);
+  let dx = touchX - c.x;
+  let dy = touchY - c.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > RADIUS) { dx = dx / dist * RADIUS; dy = dy / dist * RADIUS; }
+  js.dx = dx / RADIUS;
+  js.dy = dy / RADIUS;
+  js.stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+}
+
+function resetStick(js) {
+  js.active = false; js.id = -1; js.dx = 0; js.dy = 0;
+  js.stick.style.transform = 'translate(-50%, -50%)';
+}
+
+canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+// Also attach to joystick zones themselves
+['left-zone', 'right-zone'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('touchstart', onTouchStart, { passive: false });
+  el.addEventListener('touchmove', onTouchMove, { passive: false });
+  el.addEventListener('touchend', onTouchEnd, { passive: false });
+  el.addEventListener('touchcancel', onTouchEnd, { passive: false });
+});
+
+function touchInZone(zone, tx, ty) {
+  const r = zone.getBoundingClientRect();
+  return tx >= r.left && tx <= r.right && ty >= r.top && ty <= r.bottom;
+}
+
+function onTouchStart(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const tx = t.clientX, ty = t.clientY;
+    if (!joysticks.left.active && touchInZone(joysticks.left.zone, tx, ty)) {
+      joysticks.left.active = true; joysticks.left.id = t.identifier;
+      updateStick(joysticks.left, tx, ty);
+    } else if (!joysticks.right.active && touchInZone(joysticks.right.zone, tx, ty)) {
+      joysticks.right.active = true; joysticks.right.id = t.identifier;
+      updateStick(joysticks.right, tx, ty);
+    }
+  }
+}
+
+function onTouchMove(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (joysticks.left.active && joysticks.left.id === t.identifier)
+      updateStick(joysticks.left, t.clientX, t.clientY);
+    if (joysticks.right.active && joysticks.right.id === t.identifier)
+      updateStick(joysticks.right, t.clientX, t.clientY);
+  }
+}
+
+function onTouchEnd(e) {
+  for (const t of e.changedTouches) {
+    if (joysticks.left.active && joysticks.left.id === t.identifier)  resetStick(joysticks.left);
+    if (joysticks.right.active && joysticks.right.id === t.identifier) resetStick(joysticks.right);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  BUTTON INPUT
+// ─────────────────────────────────────────────
+const btnState = { up: false, down: false, rollL: false, rollR: false };
+
+function bindBtn(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('touchstart', e => { e.preventDefault(); btnState[key] = true; el.classList.add('pressed'); }, { passive: false });
+  el.addEventListener('touchend',   e => { e.preventDefault(); btnState[key] = false; el.classList.remove('pressed'); }, { passive: false });
+  el.addEventListener('mousedown',  () => { btnState[key] = true; el.classList.add('pressed'); });
+  el.addEventListener('mouseup',    () => { btnState[key] = false; el.classList.remove('pressed'); });
+}
+bindBtn('btn-up', 'up');
+bindBtn('btn-down', 'down');
+bindBtn('btn-roll-l', 'rollL');
+bindBtn('btn-roll-r', 'rollR');
+
+// Desktop WASD + mouse
+const keys = {};
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup',   e => keys[e.code] = false);
+
+let mouseDown = false;
+let lastMX = 0, lastMY = 0;
+canvas.addEventListener('mousedown', e => { mouseDown = true; lastMX = e.clientX; lastMY = e.clientY; });
+canvas.addEventListener('mouseup',   () => mouseDown = false);
+canvas.addEventListener('mousemove', e => {
+  if (!mouseDown) return;
+  const dx = e.clientX - lastMX;
+  const dy = e.clientY - lastMY;
+  euler.y -= dx * 0.003;
+  euler.x -= dy * 0.003;
+  euler.x = clamp(euler.x, -Math.PI / 2, Math.PI / 2);
+  lastMX = e.clientX; lastMY = e.clientY;
+});
+
+// ─────────────────────────────────────────────
+//  RENDER LOOP
+// ─────────────────────────────────────────────
+const MOVE_SPEED = 18;
+const LOOK_SPEED = 1.4;
+const VERT_SPEED = 10;
+const ROLL_SPEED = 1.0;
+const DAMPING = 0.88;
+
+const tmpVec = new THREE.Vector3();
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  // ── Camera look (right joystick)
+  if (joysticks.right.active) {
+    euler.y -= joysticks.right.dx * LOOK_SPEED * dt;
+    euler.x -= joysticks.right.dy * LOOK_SPEED * dt;
+    euler.x = clamp(euler.x, -Math.PI / 2, Math.PI / 2);
+  }
+  if (keys['ArrowLeft'])  euler.y += LOOK_SPEED * dt;
+  if (keys['ArrowRight']) euler.y -= LOOK_SPEED * dt;
+  if (keys['ArrowUp'])    euler.x += LOOK_SPEED * 0.6 * dt;
+  if (keys['ArrowDown'])  euler.x -= LOOK_SPEED * 0.6 * dt;
+
+  // Roll
+  if (btnState.rollL || keys['KeyQ']) euler.z += ROLL_SPEED * dt;
+  if (btnState.rollR || keys['KeyE']) euler.z -= ROLL_SPEED * dt;
+  euler.z *= (1 - 1.5 * dt); // roll damps back gently
+
+  camera.quaternion.setFromEuler(euler);
+
+  // ── Camera move (left joystick)
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const right   = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  const up      = new THREE.Vector3(0, 1, 0);
+
+  if (joysticks.left.active) {
+    camState.vel.addScaledVector(forward, -joysticks.left.dy * MOVE_SPEED * dt);
+    camState.vel.addScaledVector(right,    joysticks.left.dx * MOVE_SPEED * dt);
+  }
+  if (keys['KeyW'] || keys['ArrowUp'])    camState.vel.addScaledVector(forward, MOVE_SPEED * dt);
+  if (keys['KeyS'] || keys['ArrowDown'])  camState.vel.addScaledVector(forward, -MOVE_SPEED * dt);
+  if (keys['KeyA'])                       camState.vel.addScaledVector(right, -MOVE_SPEED * dt);
+  if (keys['KeyD'])                       camState.vel.addScaledVector(right, MOVE_SPEED * dt);
+
+  // Vertical
+  if (btnState.up   || keys['Space'])       camState.vel.addScaledVector(up, VERT_SPEED * dt);
+  if (btnState.down || keys['ShiftLeft'])   camState.vel.addScaledVector(up, -VERT_SPEED * dt);
+
+  camera.position.addScaledVector(camState.vel, 1);
+  camState.vel.multiplyScalar(DAMPING);
+
+  // ── Animate giants
+  animateGiant(giantA, elapsed, 0, true);
+  animateGiant(giantB, elapsed, Math.PI, true);
+
+  // Giants face each other dynamically
+  const dirA = new THREE.Vector3().subVectors(giantB.group.position, giantA.group.position);
+  giantA.group.rotation.y = Math.atan2(dirA.x, dirA.z);
+  const dirB = new THREE.Vector3().subVectors(giantA.group.position, giantB.group.position);
+  giantB.group.rotation.y = Math.atan2(dirB.x, dirB.z);
+
+  // ── Pulsing glow rings
+  glowA.material.opacity = 0.15 + Math.sin(elapsed * 2.4) * 0.08;
+  glowB.material.opacity = 0.15 + Math.sin(elapsed * 2.4 + Math.PI) * 0.08;
+
+  // ── Dust drift
+  const dpos = dustGeo.attributes.position.array;
+  for (let i = 0; i < DUST_COUNT; i++) {
+    dpos[i * 3 + 1] += Math.sin(elapsed * 0.4 + dustPhase[i]) * 0.008;
+    if (dpos[i * 3 + 1] > 30) dpos[i * 3 + 1] = 0;
+  }
+  dustGeo.attributes.position.needsUpdate = true;
+
+  renderer.render(scene, camera);
+}
+
+// Hide loading screen
+setTimeout(() => {
+  document.getElementById('loading').classList.add('fade');
+  setTimeout(() => document.getElementById('loading').remove(), 900);
+}, 1600);
+
+loop();
+</script>
+</body>
+</html>
